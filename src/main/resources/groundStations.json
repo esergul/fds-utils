@@ -1,0 +1,13 @@
+[
+  {"name": "Blonduos", "latitude": 65.64737, "longitude": -20.24609, "elevation": 53},
+  {"name": "Unst", "latitude": 60.74831, "longitude": -0.8584, "elevation": 19},
+  {"name": "Lomazzo", "latitude": 45.69715, "longitude": 9.03478, "elevation": 296},
+  {"name": "Santa Maria", "latitude": 36.99739, "longitude": -25.13726, "elevation": 194},
+  {"name": "Puertollano", "latitude": 38.67404, "longitude": -4.16204, "elevation": 690},
+  {"name": "Plana", "latitude": 42.48295, "longitude": 23.44458, "elevation": 1106},
+  {"name": "Kaspichan", "latitude": 43.3135, "longitude": 27.15743, "elevation": 100},
+  {"name": "Kandy", "latitude": 7.27423, "longitude": 80.72485, "elevation": 462},
+  {"name": "Nangetty", "latitude": -29.01042, "longitude": 115.34171, "elevation": 270},
+  {"name": "Peterborough", "latitude": -32.962, "longitude": 138.84949, "elevation": 540},
+  {"name": "Awarua", "latitude": -46.5281, "longitude": 168.3792, "elevation": 16}
+]
