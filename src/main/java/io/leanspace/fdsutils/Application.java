@@ -4,6 +4,10 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.opencsv.CSVWriter;
+import com.opencsv.ICSVWriter;
+import io.leanspace.fdsutils.model.GroundStationWithName;
+import io.leanspace.fdsutils.model.PropagationInputs;
 import io.leanspace.flightdynamics.orekit.OrekitLibrary;
 import io.leanspace.flightdynamics.orekit.model.GroundStation;
 import io.leanspace.flightdynamics.orekit.model.GroundStationVisibility;
@@ -13,13 +17,27 @@ import io.leanspace.flightdynamics.orekit.model.OrbitElements.CoordinateType;
 import io.leanspace.flightdynamics.orekit.model.OrbitElements.Tle;
 import io.leanspace.flightdynamics.orekit.model.OrbitPropagationParameters;
 import io.leanspace.flightdynamics.orekit.model.OrbitPropagationResult;
+import io.leanspace.flightdynamics.orekit.model.PropagationStep;
 import io.leanspace.flightdynamics.orekit.model.PropagatorConfiguration;
 import io.leanspace.flightdynamics.orekit.model.Spacecraft;
 import io.leanspace.flightdynamics.orekit.orbit.propagation.NumericalOrbitPropagation;
 import io.leanspace.flightdynamics.orekit.orbit.propagation.Sgp4OrbitPropagation;
-import io.leanspace.fdsutils.model.GroundStationWithName;
-import io.leanspace.fdsutils.model.PropagationInputs;
+import io.leanspace.flightdynamics.orekit.transforms.CoordinateTransformer;
 import lombok.SneakyThrows;
+import org.hipparchus.geometry.euclidean.threed.Vector3D;
+import org.orekit.data.DataSource;
+import org.orekit.frames.FramesFactory;
+import org.orekit.gnss.navigation.RinexNavigation;
+import org.orekit.gnss.navigation.RinexNavigationParser;
+import org.orekit.orbits.CartesianOrbit;
+import org.orekit.orbits.KeplerianOrbit;
+import org.orekit.orbits.PositionAngle;
+import org.orekit.propagation.analytical.gnss.data.GNSSConstants;
+import org.orekit.time.AbsoluteDate;
+import org.orekit.utils.Constants;
+import org.orekit.utils.IERSConventions;
+import org.orekit.utils.PVCoordinates;
+import org.orekit.utils.TimeStampedPVCoordinates;
 
 import java.io.FileWriter;
 import java.io.IOException;
@@ -43,7 +61,10 @@ public class Application {
   }
 
   private static void runTests() {
-    generateOemFile();
+    propagateTle();
+    //parseRinexData("src/main/resources/rinex/ABPO00MDG_R_20233602200_01H_CN.rnx");
+    //parseRinexData("src/main/resources/rinex/MET300FIN_R_20240581800_01H_MN.rnx");
+    //generateGroundStationVisibilities();
   }
 
   private static PropagationInputs getPropagationInputs() {
@@ -61,6 +82,37 @@ public class Application {
       .step(propagationStepInSeconds)
       .coordinateTypesToUse(coordinateTypesToUse)
       .build();
+  }
+
+  private static void propagateTle() {
+    OrbitElements.Tle tle = OrbitElements.Tle.builder()
+      .line1("1 25544U 98067A   24142.35003124  .00022843  00000-0  38371-3 0  9995")
+      .line2("2 25544  51.6390  88.3709 0003333 191.4959 306.2513 15.51667899454382")
+      .build();
+    Sgp4OrbitPropagation sgp4 = new Sgp4OrbitPropagation(tle);
+    int stepInSeconds = 60;
+    sgp4.setStepHandler(stepInSeconds, EnumSet.of(CoordinateType.GEODETIC, CoordinateType.CARTESIAN_ECEF));
+    sgp4.propagate(Instant.parse("2024-05-21T08:24:02.699Z"), Instant.parse("2024-05-21T08:24:02.699Z").plusSeconds(60L * 4));
+
+    final List<PropagationStep> results = sgp4.getPropagationResults();
+    try (CSVWriter writer = new CSVWriter(new FileWriter("orbit_propagation.csv"), ICSVWriter.DEFAULT_SEPARATOR,
+      ICSVWriter.NO_QUOTE_CHARACTER,
+      ICSVWriter.DEFAULT_ESCAPE_CHARACTER,
+      ICSVWriter.DEFAULT_LINE_END)) {
+      writer.writeNext(new String[]{"Timestamp", "Latitude (rad)", "Longitude (rad)", "Altitude (m)", "Ground Speed (m/s)"});
+      for (PropagationStep result : results) {
+        OrbitElements.CartesianElements ecef = result.getCartesianElementsEcef();
+        double groundSpeed = Math.sqrt(ecef.getVelocityInMetersPerSecond().getX() * ecef.getVelocityInMetersPerSecond().getX() + ecef.getVelocityInMetersPerSecond().getY() * ecef.getVelocityInMetersPerSecond().getY() + ecef.getVelocityInMetersPerSecond().getZ() * ecef.getVelocityInMetersPerSecond().getZ());
+        String[] data = {
+          result.getTimestamp().toString(),
+          String.valueOf(Math.toRadians(result.getGeodeticElements().getLatitudeInDegrees())),
+          String.valueOf(Math.toRadians(result.getGeodeticElements().getLongitudeInDegrees())),
+          String.valueOf(result.getGeodeticElements().getAltitudeInMeters()),
+          String.valueOf(groundSpeed)
+        };
+        writer.writeNext(data);
+      }
+    } catch (IOException ignored) {}
   }
 
   private static void generateOemFile() {
@@ -149,8 +201,8 @@ public class Application {
     for (Tle tle : tles) {
       final PropagationInputs inputs = PropagationInputs.builder()
         .tle(tle)
-        .startTime(Instant.parse("2023-12-30T16:28:42.123Z"))
-        .stopTime(Instant.parse("2023-12-31T00:28:42.123Z"))
+        .startTime(Instant.now())
+        .stopTime(Instant.now().plusSeconds(3 * 60 * 60))
         .step(60)
         .groundStationList(groundStationsList)
         .build();
@@ -183,6 +235,199 @@ public class Application {
       Files.write(Path.of(String.valueOf(letter) + (i%2 + 1) + " Passes.json"), objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(jsonList).getBytes());
       i++;
     }
+  }
+
+  @SneakyThrows
+  public static void parseRinexData(String filePath) {
+
+    RinexNavigationParser parser = new RinexNavigationParser();
+    RinexNavigation navigation = parser.parse(new DataSource(filePath));
+
+    navigation.getGPSNavigationMessages().forEach((sat, message) -> {
+      System.out.println("GPS - Satellite " + sat);
+      message.forEach((o) -> {
+        AbsoluteDate epoch = o.getEpochToc();
+        Double sma = o.getSma();
+        Double ecc = o.getE();
+        Double inc = o.getI0();
+        Double ran = o.getOmega0();
+        Double aop = o.getPa();
+        Double man = o.getM0();
+
+        KeplerianOrbit keplerianOrbit = new KeplerianOrbit(
+          sma,
+          ecc,
+          inc,
+          aop,
+          ran,
+          man,
+          PositionAngle.MEAN,
+          FramesFactory.getGCRF(),
+          epoch,
+          Constants.WGS84_EARTH_MU
+        );
+        PVCoordinates pvCoordinates = keplerianOrbit.getPVCoordinates();
+        System.out.println("Cartesian vector: " + pvCoordinates.toString());
+      });
+    });
+
+    navigation.getGlonassNavigationMessages().forEach((sat, message) -> {
+      System.out.println("GLONASS - Satellite " + sat);
+      message.forEach((o) -> {
+
+        AbsoluteDate epoch = o.getEpochToc();
+        Double px = o.getX();
+        Double py = o.getY();
+        Double pz = o.getZ();
+        Double vx = o.getXDot();
+        Double vy = o.getYDot();
+        Double vz = o.getZDot();
+
+        CartesianOrbit cartesianOrbit = new CartesianOrbit(
+          new TimeStampedPVCoordinates(epoch, new Vector3D(px, py, pz), new Vector3D(vx, vy, vz)),
+          FramesFactory.getEME2000(),
+          Constants.WGS84_EARTH_MU
+        );
+        System.out.println("Cartesian vector: " + cartesianOrbit.getPVCoordinates().toString());
+      });
+    });
+
+    navigation.getGalileoNavigationMessages().forEach((sat, message) -> {
+      System.out.println("Galileo - Satellite " + sat);
+      message.forEach((o) -> {
+        AbsoluteDate epoch = o.getEpochToc();
+        Double sma = o.getSma();
+        Double ecc = o.getE();
+        Double inc = o.getI0();
+        Double ran = o.getOmega0();
+        Double aop = o.getPa();
+        Double man = o.getM0();
+
+        KeplerianOrbit keplerianOrbit = new KeplerianOrbit(
+          sma,
+          ecc,
+          inc,
+          aop,
+          ran,
+          man,
+          PositionAngle.MEAN,
+          FramesFactory.getGCRF(),
+          epoch,
+          Constants.WGS84_EARTH_MU
+        );
+        PVCoordinates pvCoordinates = keplerianOrbit.getPVCoordinates();
+        System.out.println("Cartesian vector: " + pvCoordinates.toString());
+      });
+    });
+
+    navigation.getBeidouNavigationMessages().forEach((sat, message) -> {
+      System.out.println("Beidou - Satellite " + sat);
+      message.forEach((o) -> {
+        AbsoluteDate epoch = o.getEpochToc();
+        Double sma = o.getSma();
+        Double ecc = o.getE();
+        Double inc = o.getI0();
+        Double ran = o.getOmega0();
+        Double aop = o.getPa();
+        Double man = o.getM0();
+
+        KeplerianOrbit keplerianOrbit = new KeplerianOrbit(
+          sma,
+          ecc,
+          inc,
+          aop,
+          ran,
+          man,
+          PositionAngle.MEAN,
+          FramesFactory.getGCRF(),
+          epoch,
+          Constants.WGS84_EARTH_MU
+        );
+        PVCoordinates pvCoordinates = keplerianOrbit.getPVCoordinates();
+        System.out.println("Cartesian vector: " + pvCoordinates.toString());
+      });
+    });
+
+    navigation.getIRNSSNavigationMessages().forEach((sat, message) -> {
+      System.out.println("IRNSS - Satellite " + sat);
+      message.forEach((o) -> {
+        AbsoluteDate epoch = o.getEpochToc();
+        Double sma = o.getSma();
+        Double ecc = o.getE();
+        Double inc = o.getI0();
+        Double ran = o.getOmega0();
+        Double aop = o.getPa();
+        Double man = o.getM0();
+
+        KeplerianOrbit keplerianOrbit = new KeplerianOrbit(
+          sma,
+          ecc,
+          inc,
+          aop,
+          ran,
+          man,
+          PositionAngle.MEAN,
+          FramesFactory.getGCRF(),
+          epoch,
+          Constants.WGS84_EARTH_MU
+        );
+        PVCoordinates pvCoordinates = keplerianOrbit.getPVCoordinates();
+        System.out.println("Cartesian vector: " + pvCoordinates.toString());
+      });
+    });
+
+    navigation.getQZSSNavigationMessages().forEach((sat, message) -> {
+      System.out.println("QZSS - Satellite " + sat);
+      message.forEach((o) -> {
+        AbsoluteDate epoch = o.getEpochToc();
+        Double sma = o.getSma();
+        Double ecc = o.getE();
+        Double inc = o.getI0();
+        Double ran = o.getOmega0();
+        Double aop = o.getPa();
+        Double man = o.getM0();
+
+        KeplerianOrbit keplerianOrbit = new KeplerianOrbit(
+          sma,
+          ecc,
+          inc,
+          aop,
+          ran,
+          man,
+          PositionAngle.MEAN,
+          FramesFactory.getGCRF(),
+          epoch,
+          Constants.WGS84_EARTH_MU
+        );
+        PVCoordinates pvCoordinates = keplerianOrbit.getPVCoordinates();
+        System.out.println("Cartesian vector: " + pvCoordinates.toString());
+      });
+    });
+
+    navigation.getSBASNavigationMessages().forEach((sat, message) -> {
+      System.out.println("SBAS - Satellite " + sat);
+      message.forEach((o) -> {
+
+        AbsoluteDate epoch = o.getEpochToc();
+        Double px = o.getX();
+        Double py = o.getY();
+        Double pz = o.getZ();
+        Double vx = o.getXDot();
+        Double vy = o.getYDot();
+        Double vz = o.getZDot();
+
+        CoordinateTransformer coordinateTransformer = new CoordinateTransformer();
+        TimeStampedPVCoordinates eciCoordinates = coordinateTransformer.toEci(FramesFactory.getITRF(IERSConventions.IERS_2010, true),
+          new TimeStampedPVCoordinates(epoch, new Vector3D(px, py, pz), new Vector3D(vx, vy, vz)));
+
+        CartesianOrbit cartesianOrbit = new CartesianOrbit(
+          eciCoordinates,
+          FramesFactory.getGCRF(),
+          GNSSConstants.SBAS_MU
+        );
+        System.out.println("Cartesian vector: " + cartesianOrbit.getPVCoordinates().toString());
+      });
+    });
   }
 
 }
